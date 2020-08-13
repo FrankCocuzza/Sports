@@ -1,0 +1,146 @@
+---
+title: NCAA Tournament Simulation
+output: html_document
+runtime: shiny
+
+---
+
+```{r Install/Load Packages, include=FALSE}
+
+require(tidyverse)
+require(shiny)
+require(knitr)
+library(rsconnect)
+
+```
+
+```{r Load Kenpom Data, include=FALSE}
+
+ratings <- read.csv("summary20.csv")
+
+```
+
+```{r Define Functions, include=FALSE}
+
+game_predict <- function(ratings, high_seed, low_seed){
+  
+# Calculate Pythagorean Exp Win % for all teams
+ratings <- ratings %>% mutate(Pyth = AdjOE ^ 11.5 / (AdjOE ^ 11.5 + AdjDE ^ 11.5))
+
+# NCAA D1 National Averages
+avgT <- mean(ratings$AdjTempo) 
+avgE <- mean(ratings$AdjOE)
+
+# High and low seed parameters
+tempo_high <- subset(ratings, TeamName == high_seed) %>% select(AdjTempo)
+tempo_low <- subset(ratings, TeamName == low_seed) %>% select(AdjTempo)
+adjO_high <- subset(ratings, TeamName == high_seed) %>% select(AdjOE)
+adjO_low <- subset(ratings, TeamName == low_seed) %>% select(AdjOE)
+adjD_high <- subset(ratings, TeamName == high_seed) %>% select(AdjDE)
+adjD_low <- subset(ratings, TeamName == low_seed) %>% select(AdjDE)
+AdjEM_high <- subset(ratings, TeamName == high_seed) %>% select(AdjEM)
+AdjEM_low <-  subset(ratings, TeamName == low_seed) %>% select(AdjEM)
+pyth_high <- subset(ratings, TeamName == high_seed) %>% select(Pyth)
+pyth_low <- subset(ratings, TeamName == low_seed) %>% select(Pyth)
+
+# Matchup-specific parameters
+game_tempo <- tempo_high + tempo_low - avgT
+ORtg_high <-  adjO_high + adjD_low - avgE
+ORtg_low <-  adjO_low + adjD_high - avgE
+
+# Prediction & Odds
+prob_high <- (pyth_high - pyth_high * pyth_low) / (pyth_high + pyth_low - 2 * pyth_high *
+              pyth_low)
+prob_low <- (pyth_low - pyth_low * pyth_high) / (pyth_low + pyth_high - 2 * pyth_low *
+              pyth_high)
+
+win_pct <<- round(max(prob_high, prob_low) * 100, digits = 0)
+
+pts_high <- ORtg_high * game_tempo / 100
+pts_low <- ORtg_low * game_tempo / 100
+
+pts_high_round <- round(pts_high, digits = 0)
+pts_low_round <- round(pts_low , digits = 0)
+
+winner <<- if(pts_high > pts_low) high_seed else low_seed
+loser  <<- if(pts_high > pts_low) low_seed else high_seed
+
+win_score <- if (pts_high_round == pts_low_round && pts_high > pts_low) {
+                 pts_high_round + 1 } else 
+                                      if (pts_high_round == pts_low_round && pts_low > pts_high) {
+                                          pts_high_round + 1} else
+                                                              max(pts_high_round, pts_low_round)
+lose_score <- min(pts_high_round, pts_low_round)
+  
+paste("kenpom.com prediction: ",paste(paste(winner, paste(win_score, lose_score, sep = "-"), sep = " ")," (",win_pct,"%",")",sep = ""), sep = "")
+
+}
+
+## Write function to predict a single instance
+game_sim <- function(ratings, high_seed, low_seed){
+
+game_predict(ratings, high_seed, low_seed)
+  
+rand <- floor(runif(1, min=0, max=101))
+
+# Generate random integer between 1-100
+# The favorite wins if number is <= predicted win probability
+msg <- if(rand <= win_pct) winner else loser
+
+paste("The basketball gods chose", msg, "- they advance to the next round!", sep = " ")
+}
+
+```
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+
+
+This was a project I put together when I learned that the 2020 NCAA Tournament was cancelled due to the COVID-19 pandemic. As the organizer of my company bracket pool, I developed this app as a way to simulate the results of the tournament and give some levity to some of the grave news we were getting every day. I encourage you to play around with it.
+
+The app shows, for a hypothetical matchup of two teams, the predicted score and win probability for the favored team.
+Predictions are based on the ratings compiled by Ken Pomeroy at kenpom.com. Clicking the 'Simulate' button below will simulate one game of the selected matchup, weighted according to the odds derived from the kenpom.com ratings.
+
+## Select Matchup
+
+
+```{r Predictions and Simulation, echo = FALSE}
+
+shinyApp(
+    shinyUI(
+      fluidPage(
+        inputPanel(
+          selectInput(
+              'high_seed', label = 'High Seed',
+               choices = ratings$TeamName, selected = "Villanova"),
+          selectInput(
+              'low_seed', label = 'Low Seed',
+              choices = ratings$TeamName, selected = "Dayton")
+        ),
+      tableOutput("result"),
+      actionButton("simulate", "Simulate"),
+       verbatimTextOutput("sim")
+      )
+    ),
+  shinyServer(function(input, output) {
+    output$result <- renderText({
+      result <- game_predict(ratings, input$high_seed, input$low_seed)})
+    
+    observeEvent(input$simulate, {
+      output$sim <- renderText(game_sim(ratings, input$high_seed, input$low_seed))})})
+)
+
+```
+ Data current as of March 11, 2020.
