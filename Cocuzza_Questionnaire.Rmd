@@ -1,0 +1,237 @@
+---
+title: "Phillies Baseball R&D Questionnaire  - Part (b)"
+author: "Frank Cocuzza"
+date: "10/20/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r Install/Load Packages, include=FALSE}
+
+require(skimr)
+require(tidyverse)
+require(caret)
+
+```
+# Load batting dataset
+
+```{r Load}
+
+temp <- tempfile(fileext = ".csv")
+download.file("https://drive.google.com/uc?export=download&id=1tYJZ59zLvDMNvHXrB6ePQuHNtXjjXPQG",
+  temp)
+batting <- read.csv(temp, stringsAsFactors = FALSE)
+
+# Reference: https://stackoverflow.com/questions/47851761/r-how-to-read-a-file-from-google-drive-using-r
+
+```
+
+# Look at the dataset
+Review the structure and distributions of the data
+```{r Look , results = 'hide'}
+skim(batting)
+```
+Looks like there's no missing data, and many of the numeric columns are fairly normally distributed, with a few columns such as HR/FB rate and IFFB rate skewed right.
+
+
+
+# Partition data into training and test subsets
+We will train the models on the training set and compare models based on their performance on the test set. This is so we avoid over-fitting the model and make sure it can generalize. To this end, we will also set cross-validation parameters for each model type as required.
+
+```{r Partition}
+# Select 70% of the players as a training set (set random seed for reproducibility)
+set.seed(2008)
+partition_index <- createDataPartition(batting$FullSeason_AVG, p=0.70, list=FALSE)
+
+# Create Training Set
+batting_train <- batting[partition_index,]
+
+# Create Test Set
+batting_test <- batting[-partition_index,]
+
+```
+To set a baseline for our prediction, let's examine what how well we can predict with a simple linear regression.
+
+# Set a baseline prediction model
+Let's start with just one prediction variable, March/April AVG, and run a linear regression against Full season AVG.  If we wanted to include team name in the predictions as a proxy for park effects, we could break down the Team variable into 31 different binary dummy variables, but we will not do that in this exercise.
+```{r Simple Linear Regression}
+
+# Create subsets of the datasets for just the continuous variables.
+batting_train_sub <- batting_train[ ,4:29]
+batting_test_sub <- batting_test[ ,4:29]
+
+# Quick scatterplot of March/April AVG vs. Full Season AVG
+ggplot(batting_train, aes(x=MarApr_AVG, y=FullSeason_AVG)) +
+                geom_point() +
+                geom_smooth(method=lm)
+
+# Train the model
+# Select 10-fold cross validation training parameters (set random seed for reproducibility)
+set.seed(2008) 
+train.control <- trainControl(method = "cv", number = 10)
+lm_AVG <- train(FullSeason_AVG ~ MarApr_AVG, data = batting_train_sub, method = "lm",
+               trControl = train.control)
+# Test the model and summarize 
+lm_AVG.predictions <- predict(lm_AVG, batting_test)
+lm_results <- postResample(pred = lm_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+lm_results
+
+```
+The root mean squared error, which measures the absolute error of the model predictions, penalizing larger errors more heavily = 0.02742 batting average points.
+
+The mean absolute error, which measures the absolute error of the model predictions in a linear fashion = 0.02198 batting average points.
+
+The adjusted R^2 value, which measures the goodness of fit of the model in relative terms = 0.2450.
+These metrics will be the baseline against which we will compare more robust models.
+
+Considering more of the predictor variables should help us make more accurate predictions.
+
+# Train and test more models
+Let's train, tune, and test 5 different models to see if we can improve on the baseline linear regression.
+
+# Random forest
+```{r Random Forest, results = 'hide'}
+
+## Random Forest
+# Train and tune the model
+set.seed(2008)
+train.control_rf <- trainControl(method="repeatedcv", number=10, repeats=2, search="random")
+rf_AVG <- train(FullSeason_AVG ~ .,
+                 data = batting_train_sub,
+                 method = "rf",
+                 tuneLength = 9,
+                 trControl = train.control_rf
+                )
+# Test the best model and summarize results
+rf_AVG.predictions <- predict(rf_AVG, batting_test_sub)
+rf_results <- postResample(pred = rf_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+rf_results
+
+# Reference: https://rpubs.com/phamdinhkhanh/389752
+```
+
+# Gradient Boosting Machine (GBM)
+```{r GBM, results = 'hide'}
+## Gradient Boosting Machine (GBM)
+# Train and tune the model
+set.seed(2008)
+train.control_gbm <- trainControl(method="repeatedcv", number=10, repeats=2)
+Grid <- expand.grid(n.trees = seq(10,50,10), interaction.depth = c(40), shrinkage = c(0.1), n.minobsinnode = c(25))
+gbm_AVG <- train(FullSeason_AVG ~ .,
+                 data = batting_train_sub,
+                 method = 'gbm',
+                 tuneGrid = Grid,
+                 trControl = train.control_gbm
+                )
+# Test the best model and summarize results
+gbm_AVG.predictions <- predict(gbm_AVG, batting_test_sub)
+gbm_results <- postResample(pred = gbm_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+gbm_results
+
+# Reference: https://topepo.github.io/caret/model-training-and-tuning.html
+```
+
+# k-nearest neighbors (kNN)
+```{r KNN, results = 'hide'}
+## k-nearest neightbors (kNN)
+# Train and tune the model
+set.seed(2008)
+train.control_knn <- trainControl(method="repeatedcv", number=10, repeats=3)
+knn_AVG <- train(FullSeason_AVG ~ .,
+                 data = batting_train_sub,
+                 method = 'knn',
+                 trControl = train.control_knn,
+                 preProcess = c("center","scale","pca"),
+                 tuneLength = 15
+                )
+knn_AVG
+# Test the best model and summarize results
+knn_AVG.predictions <- predict(knn_AVG, batting_test_sub)
+knn_results <- postResample(pred = knn_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+knn_results
+
+# Reference: https://dataaspirant.com/2017/01/09/knn-implementation-r-using-caret-package/
+```
+
+# Generalized linear model w/ step-wise selection (GLM)
+```{r GLM, results = 'hide'}
+## Generalized linear model w/ stepwise selection (GLM) 
+
+set.seed(2008)
+train.control_mss <- trainControl(method="cv", number=3)
+glm_AVG <- train(FullSeason_AVG ~ .,
+                 data = batting_train_sub,
+                 method = 'glmStepAIC',
+                 trControl = train.control_mss,
+                 preProcess = "pca" # principal component analysis applied
+                )
+glm_AVG
+# Test the best model and summarize results
+glm_AVG.predictions <- predict(glm_AVG, batting_test_sub)
+glm_results <- postResample(pred = glm_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+glm_results
+
+# Reference: Caret documentation
+```
+
+# Neural Net
+```{r NN, results = 'hide'}
+## Neural Net
+
+set.seed(2008)
+train.control_nn <- trainControl(method="cv", number=7)
+nnetGrid <-  expand.grid(size = seq(from = 1, to = 8, by = 2),
+                        decay = seq(from = 0.05, to = 0.15, by = 0.05)) #Tuning Design - selected parameters based on a few trial and error runs
+nn_AVG <- train(FullSeason_AVG ~ .,
+                 data = batting_train_sub,
+                 method = 'nnet',
+                 trControl = train.control_nn,
+                 tuneGrid = nnetGrid
+                )
+nn_AVG
+# Test the best model and summarize results
+nn_AVG.predictions <- predict(nn_AVG, batting_test_sub)
+nn_results <- postResample(pred = nn_AVG.predictions, obs = batting_test_sub$FullSeason_AVG)
+nn_results
+
+# Reference: https://stackoverflow.com/questions/42417948/how-to-use-size-and-decay-in-nnet
+```
+
+# All models summary
+```{r Summary}
+all_summary <- as.data.frame(rbind(lm_results, rf_results, gbm_results, knn_results, glm_results, nn_results))
+labels <- rownames(all_summary)
+
+all_summary %>% 
+  mutate(min = ifelse(RMSE == min(RMSE),T,F)) %>% 
+  ggplot(aes(y= RMSE, x= labels)) +
+  geom_bar(stat="identity", aes(fill = min))  +
+  scale_fill_manual(values = c('gray', 'red')) +
+  ggtitle("Model Summary - Performance on Test Set") +
+  geom_text(aes(label = round(RMSE, digits= 5), y = 0.02), size = 3) +
+  xlab("Model Type") +
+  ylab("Root Mean Squared Error (BA Points)") +
+  theme(legend.position = 'none')
+
+# Reference: https://www.sharpsightlabs.com/blog/highlight-data-in-ggplot2/
+```
+Of all models tested, the generalized linear model with step-wise regression performed the best, with a Root Mean Squared Error of 0.02594 points on Full Season batting average. 
+
+If we wanted expand to the scope of this exercise to include figuring out which variables were most critical/ significant in predicting full-season batting average, we could dig deeper into the feature selection and optimal tuning parameters of each of the model types.
+
+This exercise could also be transformed into a classification problem if we were to gather the data on a plate appearance basis rather than aggregated by player. In this way, we could utilize logistic regression and a number of classification algorithms to predict the probability that a plate appearance ended in a hit in Mar/Apr, and then aggregate by player on the back end to predict Full Season batting average.
+
+The best performing model is shown below. (Note the variables have the form 'PC' because principal component analysis was used as a pre-processing step for this model).
+
+A .csv file with predictions on the full dataset can also be downloaded by un-commenting and running the write.csv function below.
+```{r}
+
+# Best performing model
+summary(glm_AVG)
+
+# Write csv of full dataset with predictions
+batting_predict <- cbind(batting, predict(glm_AVG, batting))
+# write.csv(batting_predict, file="batting_predictions.csv")
+```
+
