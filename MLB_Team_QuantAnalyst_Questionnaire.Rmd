@@ -1,5 +1,5 @@
 ---
-title: "Phillies Baseball R&D Questionnaire  - Part (b)"
+title: "MLB Team R&D Questionnaire  - Part (b)"
 author: "Frank Cocuzza"
 date: "10/20/2019"
 output:
