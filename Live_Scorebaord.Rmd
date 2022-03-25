@@ -1,0 +1,229 @@
+---
+output: html_document
+runtime: shiny
+---
+
+```{r Install/Load Packages, include=FALSE}
+library(rvest)
+library(tidyverse)
+library(curl)
+library(Rcpp)
+library(googlesheets4)
+library(googledrive)
+library(stringr)
+library(dplyr)
+library(lubridate)
+library(shiny)
+library(knitr)
+library(rsconnect)
+library(DT)
+```
+
+
+```{r Define Functions, include=FALSE}
+
+# scrape game links function
+    scrape_game_links <- function(month_day) {
+    scoreboard_url <- paste0("http://stats.tcpalm.com/sports-scores/College-Basketball-Scores-Matchups.aspx?Year=2022&Period=",month_day,"&CurrentSeason=2021-2022")
+    scoreboard_page <- read_html(scoreboard_url) 
+    game_links <- scoreboard_page %>% html_nodes('a[href*="/results/2021-2022/boxscore"]') %>% html_attr('href') %>% paste0("http://stats.tcpalm.com",.)
+    tibble::tibble(month_day, game_links)
+    }
+
+# scrape player stats function
+    scrape_game_player_stats <- function(game_url){
+    game_page <- read_html(game_url) 
+    players <- game_page %>% html_nodes('td.sdi-datahead-sub-nb a[href*="players"]')  %>% html_text
+    pts <- game_page %>% html_nodes('td.sdi-datacell[align=right]:last-child')  %>% as.character() %>% str_subset('.nowrap class=.', negate=FALSE) %>% str_squish() 
+    pts <- gsub(".*> ","", pts) %>% str_sub(end=-6) %>% as.numeric()
+    ast <- game_page %>% html_nodes('td.sdi-datacell[align=right]:nth-last-child(6)')  %>% as.character() %>% str_subset('.nowrap class=.', negate=FALSE) %>% str_squish()
+    ast <- data.frame(asts = ast)
+    ast <- ast %>% dplyr::filter(!grepl("% <", ast$asts)) 
+    ast <- gsub(".*> ","", ast$asts) %>% str_sub(end=-6) %>% as.numeric()
+    reb <- game_page %>% html_nodes('td.sdi-datacell[align=right]:nth-last-child(7)')  %>% as.character() %>% str_subset('.nowrap class=.', negate=FALSE) %>% str_squish() 
+    reb <- gsub(".*> ","", reb) %>% str_sub(end=-6) %>% as.numeric()
+    player_stats <-  bind_cols(players, pts, ast, reb, game_url)
+    }
+
+```
+
+```{r Define Scoreboard Building Functions, include=FALSE}
+
+build_scoreboard <- function() {
+  
+# define tournament schedule
+    month_day <- c('0317','0318','0319','0320','0324','0325','0326','0327','0402', '0404')
+    round <- c('First Round','First Round','Second Round','Second Round','Sweet 16','Sweet 16','Elite 8','Elite 8','Final 4','Championship')  
+    
+# get current date
+    sys_date <- paste0(0,month(Sys.time()),day(Sys.time()))
+    
+# trim down schedule date list to avoid 404 errors when calling links that don't exist yet
+    daily_month_day <- month_day[month_day == sys_date | month_day < sys_date]
+    daily_round <- round[1:length(daily_month_day)]
+    daily_date_round <- data.frame(cbind(daily_month_day, daily_round))
+    
+# scrape game links and player stats 
+    Jaylin <- c("http://stats.tcpalm.com/basketball/ncaab-boxscores.aspx?page=/data/NCAAB/results/2021-2022/boxscore1049906.html",
+                "http://stats.tcpalm.com/basketball/ncaab-boxscores.aspx?page=/data/NCAAB/results/2021-2022/boxscore1050070.html")
+    
+    dates_links <-      pmap_dfr(list(daily_date_round$daily_month_day), scrape_game_links)
+    player_stats <-     pmap_dfr(list(dates_links$game_links), scrape_game_player_stats) %>%
+                                  filter(...1 != 'Jordan Roberts') %>% 
+                                  filter(!(...1 == 'Jaylin Williams' & ...5 %in% Jaylin))
+    
+ # filter out any players not picked
+    #picks <- read_sheet("https://docs.google.com/spreadsheets/d/1C2Dt065Ckz5Viea_btEnrfG2SC6GRQUi8-iRNcrQxAc/edit?usp=sharing", sheet = 'Clean')
+    picks <<- read_csv("2022 March Madness - Player Stats Pool (Responses) - Clean.csv",show_col_types = FALSE)
+    picked_players <- bind_rows(picks[2], picks[3], picks[4], picks[5], picks[6], picks[7]) %>% mutate(name = coalesce(`Player 1`,`Player 2`,`Player 3`,`Player 4`,`Player 5`,`Player 6`)) %>% 
+    select(name) %>% distinct()
+    player_stats_filtered <- inner_join(picked_players, player_stats, by = c('name'='...1'))
+    
+      
+ # and create a db for each of the 3 stats   
+    player_stats_db <-  left_join(player_stats_filtered, dates_links, by = c("...5" = "game_links")) 
+    player_stats_db <-  left_join(player_stats_db, daily_date_round, by = c("month_day" = "daily_month_day")) %>% 
+                        rename(name = name, pts = ...2, ast= ...3, reb = ...4, game_links = ...5) %>% select('name', 'pts', 'reb', 'ast', 'game_links', 'month_day', 'daily_round')
+    player_pts_db <-    player_stats_db %>% select(name, pts, daily_round)
+    player_reb_db <-    player_stats_db %>% select(name, reb, daily_round)
+    player_ast_db <-    player_stats_db %>% select(name, ast, daily_round)
+    
+
+    player_pts_summary <<- player_pts_db %>% pivot_wider(id_cols = name, names_from = daily_round, values_from = pts) %>% mutate(TOTAL = rowSums(.[,-1],na.rm = TRUE)) %>% arrange(desc(TOTAL))
+    player_reb_summary <<- player_reb_db %>% pivot_wider(id_cols = name, names_from = daily_round, values_from = reb) %>% mutate(TOTAL = rowSums(.[,-1],na.rm = TRUE)) %>% arrange(desc(TOTAL))
+    player_ast_summary <<- player_ast_db %>% pivot_wider(id_cols = name, names_from = daily_round, values_from = ast) %>% mutate(TOTAL = rowSums(.[,-1],na.rm = TRUE)) %>% arrange(desc(TOTAL))
+  
+  # get eliminated player inf0    
+  gs4_deauth()
+  ss <- "https://docs.google.com/spreadsheets/d/1In56ciPnLk_liVkuQmk7S2Jkd8qjKfoRQtWUBFJXK24/edit?usp=sharing"
+  eliminations <- read_sheet(ss, sheet= 'Players')
+    
+# create DETAIL VIEWS  
+    pts_detail <<- left_join(picks, player_pts_summary, by = c("Player 1" = "name"))%>% select('Team', 'Player 1','p1pts' = 'TOTAL','Player 2','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_pts_summary, by = c("Player 2"="name"))%>% select('Team', 'Player 1','p1pts','Player 2','p2pts' = 'TOTAL','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_pts_summary, by = c("Player 3"="name"))%>% select('Team', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts' = 'TOTAL','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_pts_summary, by = c("Player 4"="name"))%>% select('Team', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts'= 'TOTAL','Player 5','Player 6') %>%
+                  left_join(.,player_pts_summary, by = c("Player 5"="name"))%>% select('Team', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts' = 'TOTAL','Player 6') %>%
+                  left_join(.,player_pts_summary, by = c("Player 6"="name"))%>% select('Team', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts' = 'TOTAL') %>%
+       left_join(eliminations, by = c("Player 1" = "Player")) %>% select('Team' = 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status'='Status') %>%
+    left_join(eliminations, by = c("Player 2" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status'='Status') %>%
+    left_join(eliminations, by = c("Player 3" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status','p3Status'='Status') %>%
+    left_join(eliminations, by = c("Player 4" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status','p3Status','p4Status'='Status') %>%
+    left_join(eliminations, by = c("Player 5" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status','p3Status','p4Status','p5Status'='Status') %>%
+    left_join(eliminations, by = c("Player 6" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status'='Status') %>%
+                  mutate(Tournament_Total_Pts = rowSums(.[,c(3,5,7,9,11,13)],na.rm = TRUE)) %>% mutate(Rank = dense_rank(desc(Tournament_Total_Pts))) %>%
+                  select('Rank','Team','Tournament_Total_Pts' ,'Player 1','p1pts','Player 2','p2pts','Player 3', 'p3pts','Player 4','p4pts','Player 5','p5pts','Player 6','p6pts','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status') %>%
+                  arrange(desc(Tournament_Total_Pts))
+    
+    
+    
+    reb_detail <<- left_join(picks, player_reb_summary, by = c("Player 1" = "name"))%>% select('Team', 'Player 1','p1reb' = 'TOTAL','Player 2','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_reb_summary, by = c("Player 2"="name"))%>% select('Team', 'Player 1','p1reb','Player 2','p2reb' = 'TOTAL','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_reb_summary, by = c("Player 3"="name"))%>% select('Team', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb' = 'TOTAL','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_reb_summary, by = c("Player 4"="name"))%>% select('Team', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb'= 'TOTAL','Player 5','Player 6') %>%
+                  left_join(.,player_reb_summary, by = c("Player 5"="name"))%>% select('Team', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb' = 'TOTAL','Player 6') %>%
+                  left_join(.,player_reb_summary, by = c("Player 6"="name"))%>% select('Team', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb' = 'TOTAL') %>%
+       left_join(eliminations, by = c("Player 1" = "Player")) %>% select('Team' = 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status'='Status') %>%
+    left_join(eliminations, by = c("Player 2" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status'='Status') %>%
+    left_join(eliminations, by = c("Player 3" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status','p3Status'='Status') %>%
+    left_join(eliminations, by = c("Player 4" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status','p3Status','p4Status'='Status') %>%
+    left_join(eliminations, by = c("Player 5" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status','p3Status','p4Status','p5Status'='Status') %>%
+    left_join(eliminations, by = c("Player 6" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status'='Status') %>%
+                  mutate(Tournament_Total_reb = rowSums(.[,c(3,5,7,9,11,13)],na.rm = TRUE)) %>% mutate(Rank = dense_rank(desc(Tournament_Total_reb))) %>%
+                  select('Rank','Team','Tournament_Total_reb' ,'Player 1','p1reb','Player 2','p2reb','Player 3', 'p3reb','Player 4','p4reb','Player 5','p5reb','Player 6','p6reb','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status') %>%
+                  arrange(desc(Tournament_Total_reb))
+    
+    ast_detail <<- left_join(picks, player_ast_summary, by = c("Player 1" = "name"))%>% select('Team', 'Player 1','p1ast' = 'TOTAL','Player 2','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_ast_summary, by = c("Player 2"="name"))%>% select('Team', 'Player 1','p1ast','Player 2','p2ast' = 'TOTAL','Player 3','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_ast_summary, by = c("Player 3"="name"))%>% select('Team', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast' = 'TOTAL','Player 4','Player 5','Player 6') %>%
+                  left_join(.,player_ast_summary, by = c("Player 4"="name"))%>% select('Team', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast'= 'TOTAL','Player 5','Player 6') %>%
+                  left_join(.,player_ast_summary, by = c("Player 5"="name"))%>% select('Team', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast' = 'TOTAL','Player 6') %>%
+                  left_join(.,player_ast_summary, by = c("Player 6"="name"))%>% select('Team', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast' = 'TOTAL') %>%
+       left_join(eliminations, by = c("Player 1" = "Player")) %>% select('Team' = 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status'='Status') %>%
+    left_join(eliminations, by = c("Player 2" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status'='Status') %>%
+    left_join(eliminations, by = c("Player 3" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status','p3Status'='Status') %>%
+    left_join(eliminations, by = c("Player 4" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status','p3Status','p4Status'='Status') %>%
+    left_join(eliminations, by = c("Player 5" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status','p3Status','p4Status','p5Status'='Status') %>%
+    left_join(eliminations, by = c("Player 6" = "Player")) %>% select('Team'= 'Team.x', 'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status'='Status') %>%
+                  mutate(Tournament_Total_ast = rowSums(.[,c(3,5,7,9,11,13)],na.rm = TRUE)) %>% mutate(Rank = dense_rank(desc(Tournament_Total_ast))) %>%
+                  select('Rank','Team','Tournament_Total_ast' ,'Player 1','p1ast','Player 2','p2ast','Player 3', 'p3ast','Player 4','p4ast','Player 5','p5ast','Player 6','p6ast','p1Status','p2Status','p3Status','p4Status','p5Status','p6Status') %>%
+                  arrange(desc(Tournament_Total_ast))
+                  
+    
+ }   
+    
+   
+
+
+```
+
+
+
+```{r 2022 NCAA Tournament Player Pool - Live Scoreboard, echo = FALSE}
+
+
+ui <- 
+  
+  fluidPage(
+                titlePanel(h1("2022 NCAA Tournament Player Pool - Live Scoreboard (v 1.4)")),
+                mainPanel(
+                h5("Data takes ~30 seconds to render on first load, and will auto-refresh every 2 minutes and on page refresh.
+
+Data is sourced from the live box scores of TCPalm.com
+
+Contact me if you see any glitches."),
+                h2("Points"),
+                dataTableOutput('ptstable', width = "75%"),
+                h2("Rebounds"),
+                dataTableOutput('rebtable', width = "75%"),
+                h2("Assists"),
+                dataTableOutput('asttable', width = "75%")
+                          )
+                )
+    
+ server <- function(input, output, session){
+   
+      Data <- reactivePoll(120000, session,
+                             checkFunc = function(){ Sys.time() },
+                             valueFunc = function(){build_scoreboard()})
+      output$ptstable <- renderDataTable({Data()
+                                          datatable(pts_detail,options = list(pageLength = 20,
+                                                                              columnDefs = list(list(visible=FALSE,
+                                                                                                     targets=c(15:20)))
+                                                                              ), rownames=FALSE) %>%
+                                          formatStyle(columns = c(4,6,8,10,12,14),
+                                                      valueColumns = c(16:21),
+                                                      backgroundColor = styleEqual(c('x'), 
+                                                                                   c('red')))
+                                          
+                                          })
+      output$rebtable <- renderDataTable({Data()
+                                          datatable(reb_detail,options = list(pageLength = 20,
+                                                                              columnDefs = list(list(visible=FALSE,
+                                                                                                     targets=c(15:20)))
+                                                                              ), rownames=FALSE) %>%
+                                          formatStyle(columns = c(4,6,8,10,12,14),
+                                                      valueColumns = c(16:21),
+                                                      backgroundColor = styleEqual(c('x'), 
+                                                                                   c('red')))
+                                          })
+      output$asttable <- renderDataTable({Data()
+                                          datatable(ast_detail,options = list(pageLength = 20,
+                                                                              columnDefs = list(list(visible=FALSE,
+                                                                                                     targets=c(15:20)))
+                                                                              ), rownames=FALSE) %>%
+                                          formatStyle(columns = c(4,6,8,10,12,14),
+                                                      valueColumns = c(16:21),
+                                                      backgroundColor = styleEqual(c('x'), 
+                                                                                   c('red')))
+                                          })
+      
+                                          }
+ shinyApp(ui, server, options = list(height = 2160, width=2000))
+ 
+ 
+ 
+ 
+
+ 
+```
