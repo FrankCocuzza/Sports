@@ -1,3 +1,7 @@
+## This is an R Markdown document I wrote to track live scores for entrants in contest a run for the NCAA Men's Basketball tournament in 2022. 
+## It scrapes player stats from the web, merges those stats with the entrant's player picks, and renders a ShinyApp with a live leaderboard.
+
+
 ---
 output: html_document
 runtime: shiny
