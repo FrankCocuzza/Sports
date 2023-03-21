@@ -13,7 +13,7 @@ login <- "https://kenpom.com"
 
 pgsession<-session(login)
 pgform<-html_form(pgsession)[[1]]  #in this case the submit is the 1st form
-filled_form<-html_form_set(pgform, email="f.cocuzza@gmail.com", password="threenonymousdonor")
+filled_form<-html_form_set(pgform, email="####", password="#####")
 session_submit(pgsession, filled_form)
 
 # Define function to scrape list of box score links for the primary team-year
