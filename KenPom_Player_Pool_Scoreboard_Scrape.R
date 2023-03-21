@@ -49,7 +49,7 @@ scrape_completed_box_score_links <- function(date,round){
   login <- "https://kenpom.com" 
   pgsession<-session(login)
   pgform<-html_form(pgsession)[[1]]  #in this case the submit is the 1st form
-  filled_form<-html_form_set(pgform, email="f.cocuzza@gmail.com", password="threenonymousdonor")
+  filled_form<-html_form_set(pgform, email="#######", password="######")
   session_submit(pgsession, filled_form)
 
   fanmatch_url <-  paste0("https://kenpom.com/fanmatch.php?d=",date)
