@@ -1,0 +1,102 @@
+---
+title: "KenPomScrape"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(rvest)
+library(tidyverse)
+library(tibble)
+library(data.table)
+library(googlesheets4)
+library(googledrive)
+
+
+```
+
+
+
+```{r}
+
+# Login to kenpom.com
+
+login <- "https://kenpom.com"
+
+pgsession<-session(login)
+pgform<-html_form(pgsession)[[1]]  #in this case the submit is the 1st form
+filled_form<-html_form_set(pgform, email="f.cocuzza@gmail.com", password="threenonymousdonor")
+session_submit(pgsession, filled_form)
+
+# Define function to scrape ratings archive page by date 
+  
+scrape_ratings_from_a_day <- function(date) {
+  
+    url<-"https://kenpom.com/archive.php?d="  
+    url<-paste0(url, date)
+    page<-session_jump_to(pgsession, url)
+  
+    # Extract text and links from team page
+  
+    team <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(2)") %>% html_nodes("a")  %>% html_text()}  else {"Not Available"}
+                
+    rank <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(1)")  %>%     html_text() %>% as.numeric()} else {"Not Available"}
+    
+    adjEM  <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(4)")  %>% html_text()  %>% as.numeric()} else {"Not Available"}
+    
+    adjOE  <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(5)")  %>% html_text() %>% as.numeric()} else {"Not Available"}
+    
+    adjDE  <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(7)")  %>% html_text() %>% as.numeric()} else {"Not Available"}
+    
+    adjT   <- if (length(page %>%html_nodes("tbody tr"))>1) {page %>%html_nodes("tbody tr") %>% html_nodes("td:nth-of-type(9)")  %>% html_text() %>% as.numeric()} else {"Not Available"}
+    
+    date <- date
+    
+ ratings_on_ <<- data.frame(date,team, rank, adjEM, adjOE, adjDE, adjT)
+    
+      
+    assign(gsub("-","_",paste0("xx",as.character(get("date")),"_ratings")),ratings_on_,envir = .GlobalEnv)
+}
+
+# Define function to loop scraping function between a start and end date 
+
+scrape_ratings_from_range_of_dates <- function(start_date,end_date) {
+  
+  date_list <<- as.character(seq(as.Date(start_date), as.Date(end_date), by="days"))
+  day_ratings <<- gsub("-","_",paste0("xx",as.character(seq(as.Date(start_date), as.Date(end_date), by="days")),"_ratings"))
+  
+  for (date in date_list){
+    scrape_ratings_from_a_day(date)
+    Sys.sleep(0.0001)
+                          }
+}
+
+
+
+# scrape ratings from desired dates
+scrape_ratings_from_range_of_dates('2022-11-07','2023-02-27')
+
+# combine each day's ratings into a big data frame and store as output
+output <<- do.call(rbind,mget(day_ratings))
+
+# Write to google sheet
+
+ sheet_url <- "https://docs.google.com/spreadsheets/d/1O5E3FnIoCzyhDpB2qLY9Tgf-aH-uqi2J0kHWqV_6NQ4/edit#gid=0"
+  
+  
+  gs4_auth(scope = "https://www.googleapis.com/auth/drive")
+drive_auth(token = gs4_token())
+  
+  # write data in the appropriate sheet and range
+  range_write(output, ss = sheet_url, sheet = "Sheet1", range = "A1:P100000")
+
+
+#  https://github.com/yusuzech/r-web-scraping-cheat-sheet/blob/master/README.md#rvest7.11
+# https://rvest.tidyverse.org/reference/html_nodes.html
+# https://stackoverflow.com/questions/43598427/r-how-to-extract-items-from-xml-nodeset
+# https://www.marsja.se/how-to-transpose-a-dataframe-or-matrix-in-r-with-the-t-function/
+ # https://googlesheets4.tidyverse.org/articles/drive-and-sheets.html
+  
+  # start_date <- '2022-11-07'
+  # end_date <- '2023-02-27'
+  # date <- '2022-12-26'
+```
