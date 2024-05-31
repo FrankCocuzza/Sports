@@ -1,5 +1,6 @@
 
 // This function calls an api to get live golf leaderboard data and writes it into a google sheet
+// It is for use in the Google Apps Script Extension to google sheets
 
 // API info (best viewed in a non-chrome browser for some reason), see the 'Endpoints' tab: https://rapidapi.com/slashgolf/api/live-golf-data/details
 // API documentation: https://slashgolf.dev/docs
