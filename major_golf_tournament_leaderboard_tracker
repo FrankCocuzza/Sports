@@ -1,0 +1,161 @@
+
+// This function calls an api to get live golf leaderboard data and writes it into a google sheet
+
+// API info (best viewed in a non-chrome browser for some reason), see the 'Endpoints' tab: https://rapidapi.com/slashgolf/api/live-golf-data/details
+// API documentation: https://slashgolf.dev/docs
+// The API also providesa tutorial on how to use this API using python: https://github.com/slashgolf/slashgolf/blob/main/samples/leaderboard_tracker/src/tracker.py
+
+// This API allow 250 free calls/refreshes per month, if we execute it every 5 minutes, that gives almost a full dayof refreshes per account/key
+// I've subscribed 5 accounts, each has its own API key 
+
+// Here are the values to be used for 'X-RapidAPI-Key' below
+// frank key: 'xx123'
+// paula key: 'xx123'
+// frank key 2: 'xx123'
+// frank key 3: 'xx123'
+// frank key 4: 'xx123'
+
+// Steps to set this up for a tournament:
+
+// 1. Replace X's with relevant tournament id + year and paste into url variable definition around line 63 (after const url = ...) 
+//    'https://live-golf-data.p.rapidapi.com/leaderboard?orgId=1&tournId=XXX&year=XXXX'
+
+// 2024 major tournament id's
+// masters: 014
+// pga champ: 033
+// us open: 026
+// british open: 100
+
+// 2. On the Thursday morning of a tournament, using the alarm-clock-looking icon on the left of this screen create a 'Trigger' selecting "fetchData" for which function to run
+//    "Head" for deployment, "Time-driven" for event source, then "Minutes Timer", then "Every 5 minutes"
+
+// 3. At the conclusion of a tournament delete the triggers
+
+function myFunction() {
+  // Get the current date and time
+  var now = new Date();
+
+  // Define the start and end times during which you want the function to run
+  var startTime = new Date();
+  startTime.setHours(7); // Set the start hour (e.g., 7 AM)
+  startTime.setMinutes(0); // Set the start minute
+  
+  var endTime = new Date();
+  endTime.setHours(23); // Set the end hour (e.g., 11 PM)
+  endTime.setMinutes(0); // Set the end minute
+  
+  // Check if the current time is within the specified range
+  if (now >= startTime && now <= endTime) {
+    
+    //logic for data refresh begins on this line
+
+    // set which api key to used based on the day of the week
+  var today = new Date();
+  var dayOfWeek2 = today.getDay(); // 0 for Sunday, 1 for Monday, ..., 6 for Saturday
+  var apiKey2;
+  switch (dayOfWeek2) {
+    case 0:
+      apiKey2 = 'xx123';
+      break;
+    case 1:
+      apiKey2 = 'xx123';
+      break;
+    case 2:
+      apiKey2 = 'xx123';
+      break;
+    case 3:
+      apiKey2 = 'xx123';
+      break;
+    case 4:
+      apiKey2 = 'xx123';
+      break;
+    case 5:
+      apiKey2 = 'xx123';
+      break;
+    case 6:
+      apiKey2 = 'xx123';
+      break;
+    default:
+      apiKey2 = "Unknown";}
+
+// send request for data to API
+const url = 'https://live-golf-data.p.rapidapi.com/leaderboard?orgId=1&tournId=032&year=2024';
+const options = {
+	method: 'GET',
+headers: {
+		'X-RapidAPI-Key': apiKey2, 
+		'X-RapidAPI-Host': 'live-golf-data.p.rapidapi.com'
+	}
+};
+
+	const response = UrlFetchApp.fetch(url, options);
+  var datatext = response.getContentText();
+  //console.log(datatext)
+  var parsedData = JSON.parse(datatext);
+  //console.log(parsedData)
+
+var ss = SpreadsheetApp.getActiveSpreadsheet();
+var sheet = ss.getSheetByName("RapidAPIScores");
+
+// Get all keys for the first row to construct the header
+var header = ['Row']; // Initialize the header array with 'Row'
+Object.keys(parsedData.leaderboardRows['0']).forEach(function(key) {
+  header.push(key); // Add each nested key to the header array
+});
+
+// Initialize the array with the header
+var array = [header];
+
+// Iterate through each row in the JSON object
+Object.keys(parsedData.leaderboardRows).forEach(function(rowKey) {
+  var row = [rowKey]; // Initialize each row with the row key
+  // Iterate through each nested key in the row
+  Object.keys(parsedData.leaderboardRows[rowKey]).forEach(function(nestedKey) {
+    row.push(parsedData.leaderboardRows[rowKey][nestedKey]); // Add each nested value to the row
+  });
+  array.push(row); // Add the row to the array
+});
+//Logger.log(array);
+
+//write last updated timestamp to the spreadsheet
+var now = new Array(new Date(),new Date());
+//console.log(now);
+var range2 = sheet.getRange(1,1,1,2);
+range2.setValues([now]);
+
+//write the array to the spreadsheet
+//var range = sheet.getRange(3,1, array.length, array[0].length);
+//range.setValues(array);
+
+var numRows = array.length;
+var maxCols = 0;
+
+// Find the maximum number of columns in any row
+for (var i = 0; i < numRows; i++) {
+    var rowCols = array[i].length;
+    if (rowCols > maxCols) {
+        maxCols = rowCols;
+    }
+}
+
+// Define the range for each row separately
+for (var i = 0; i < numRows; i++) {
+    var rowCols = array[i].length;
+    var range = sheet.getRange(i + 3, 1, 1, maxCols);
+    if (rowCols < maxCols) {
+        // Resize the range if the number of columns in the row is less than maxCols
+        range.setValues([array[i].concat(new Array(maxCols - rowCols).fill(""))]);
+    } else {
+        range.setValues([array[i]]);
+    }
+}
+    
+  } else {
+    Logger.log("Function is not running during the specified hours.");
+    //Logger.log(now);
+  }
+}
+
+
+
+
